@@ -38,7 +38,7 @@ jobs:
               global lastAction := name
           }
           TestWebMessage(sender, args) {
-              try FileAppend("MESSAGE source=" args.Source " value=" args.TryGetWebMessageAsString() "`n", "*")
+              try FileAppend("MESSAGE source=" SubStr(args.Source, 1, 40) " value=" args.TryGetWebMessageAsString() "`n", "*")
           }
           Fail(message) {
               FileAppend("FAIL: " message "`n", "*")
