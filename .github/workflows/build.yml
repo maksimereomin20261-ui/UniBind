@@ -1,0 +1,60 @@
+name: Собрать UniBind (без публикации)
+on:
+  workflow_dispatch:
+  push:
+    branches: [unibind-next]
+    paths: ['.github/workflows/build.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Проверить и скачать официальные инструменты
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .tools | Out-Null
+          $sources = @(
+            @{ url = 'https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.31/AutoHotkey_2.0.31.zip'; path = '.tools/ahk.zip'; sha = 'ca1a595aca4528755d8d4cd7fed23d497a37bd9a0b6892072612d68dee1bd00a' },
+            @{ url = 'https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a2/Ahk2Exe1.1.37.02a2.zip'; path = '.tools/compiler.zip'; sha = 'c29b8c3a5124850d79fc9e66e2ca79677c377d7f31631ad3022ba159c5d9e3be' }
+          )
+          foreach ($s in $sources) {
+            Invoke-WebRequest -Uri $s.url -OutFile $s.path
+            if ((Get-FileHash $s.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $s.sha) { throw 'SHA-256 mismatch' }
+          }
+          Expand-Archive .tools/ahk.zip .tools/ahk
+          Expand-Archive .tools/compiler.zip .tools/compiler
+      - name: Собрать приложение и загрузчик
+        shell: pwsh
+        run: |
+          python -m pip install 'pyinstaller==6.11.1'
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller installation failed' }
+          New-Item -ItemType Directory -Force build/payload | Out-Null
+          $compiler = (Resolve-Path '.tools/compiler/Ahk2Exe.exe').Path
+          $src = (Resolve-Path 'app/UniBind.ahk').Path
+          $base = (Resolve-Path '.tools/ahk/AutoHotkey64.exe').Path
+          $target = Join-Path $PWD 'build/payload/UniBind.exe'
+          $params = @('/in', ('"{0}"' -f $src), '/out', ('"{0}"' -f $target), '/base', ('"{0}"' -f $base), '/silent', 'verbose')
+          $process = Start-Process -FilePath $compiler -ArgumentList $params -Wait -PassThru -RedirectStandardOutput 'build/compile-out.txt' -RedirectStandardError 'build/compile-err.txt'
+          if (Test-Path 'build/compile-out.txt') { Get-Content 'build/compile-out.txt' }
+          if (Test-Path 'build/compile-err.txt') { Get-Content 'build/compile-err.txt' }
+          if ($process.ExitCode -ne 0 -or !(Test-Path $target)) { throw ('Compilation failed, exit code: ' + $process.ExitCode) }
+          Copy-Item app/ui build/payload/ui -Recurse
+          Copy-Item app/lib build/payload/lib -Recurse
+          Copy-Item app/THIRD_PARTY_NOTICES.md build/payload/
+          Copy-Item .tools/ahk/license.txt build/payload/LICENSE-AutoHotkey.txt
+          Compress-Archive -Path build/payload/* -DestinationPath build/UniBind-App.zip
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name UniBind_Setup --icon installer/UniBind.ico installer/launcher.py
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path dist/UniBind_Setup.exe)) { throw 'Launcher build failed' }
+          Copy-Item dist/UniBind_Setup.exe build/UniBind_Setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UniBind-Windows-unverified
+          path: |
+            build/UniBind-App.zip
+            build/UniBind_Setup.exe
+          if-no-files-found: error
