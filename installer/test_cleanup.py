@@ -22,6 +22,13 @@ class Cleanup(unittest.TestCase):
   self.assertTrue((self.active/'UniBind.exe').exists())
   self.assertFalse((m.VERSIONS/self.b).exists());self.assertFalse((m.VERSIONS/self.c).exists())
   self.assertEqual((m.DATA/'binds.ini').read_text(),'my binds');self.assertTrue((m.VERSIONS/'other'/'keep').exists())
+ def test_old_version_with_personal_files_is_preserved(self):
+  old=m.VERSIONS/self.b
+  (old/'config').mkdir();(old/'config'/'settings.ini').write_text('personal')
+  self.assertEqual(m.cleanup_old_versions(self.active/'UniBind.exe'),[self.b])
+  self.assertEqual((old/'config'/'settings.ini').read_text(),'personal')
+  self.assertFalse((m.VERSIONS/self.c).exists())
+  self.assertEqual((m.DATA/'binds.ini').read_text(),'my binds')
  def test_no_cleanup_if_active_missing_or_different(self):
   (self.active/'UniBind.exe').unlink();self.assertEqual(m.cleanup_old_versions(self.active/'UniBind.exe'),[])
   self.assertTrue((m.VERSIONS/self.b).exists())
