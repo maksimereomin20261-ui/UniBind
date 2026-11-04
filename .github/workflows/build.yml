@@ -2,8 +2,8 @@ name: Собрать UniBind (без публикации)
 on:
   workflow_dispatch:
   push:
-    branches: [unibind-next]
-    paths: ['.github/workflows/build.yml']
+    branches: [main]
+    paths: ['installer/**', 'app/**', '.github/workflows/build.yml']
 permissions:
   contents: read
 jobs:
