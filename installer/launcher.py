@@ -182,6 +182,33 @@ def commit_version(archive, digest, tag):
     return final / 'UniBind.exe'
 
 
+def cleanup_old_versions(active_exe):
+    """Remove only inactive digest-named version directories; never touch user data."""
+    active = current()
+    if active is None or active.resolve() != Path(active_exe).resolve():
+        return []  # Do not delete anything unless the committed active executable exists.
+    active_dir = active.parent
+    try:
+        attr = getattr(active_dir.lstat(), 'st_file_attributes', 0)
+        if active_dir.is_symlink() or attr & 0x400:
+            return []  # Do not follow a symlink or Windows reparse point.
+        entries = list(VERSIONS.iterdir())
+    except OSError:
+        return []
+    failed = []
+    for entry in entries:
+        if entry.name == active_dir.name or not re.fullmatch(r'[0-9a-f]{64}', entry.name):
+            continue
+        try:
+            attr = getattr(entry.lstat(), 'st_file_attributes', 0)
+            if entry.is_symlink() or attr & 0x400 or not entry.is_dir():
+                continue
+            shutil.rmtree(entry)
+        except OSError:
+            failed.append(entry.name)
+    return failed
+
+
 def create_shortcut():
     # Windows resolves redirected/OneDrive Desktop via WScript, not USERPROFILE/Desktop.
     script = r'''$w=New-Object -ComObject WScript.Shell
@@ -323,7 +350,7 @@ class Window:
         for i in range(42):
             t=i/41
             color = '#%02x%02x%02x' % (int(105+57*t), int(49+40*t), 246+int(9*t))
-            part=c.create_rectangle(self.p(44),self.p(208),self.p(44),self.p(214), fill=color, outline='')
+            part=c.create_rectangle(self.p(44),self.p(208),self.p(44),self.p(214), fill=color, outline='', state='hidden')
             self.bar_parts.append(part)
         self.percent = self.text(451, 211, '', 15, '#a975ff', 'bold')
         # Spinner is a true indeterminate activity indicator, not a progress gauge.
@@ -363,7 +390,9 @@ class Window:
             for i, part in enumerate(self.bar_parts):
                 left = 44+376*i/42
                 right = min(44+376*(i+1)/42,44+376*self.display_progress)
-                self.canvas.coords(part, self.p(left),self.p(208),self.p(max(left,right)),self.p(214))
+                x1, x2 = self.p(left), self.p(max(left, right))
+                self.canvas.coords(part, x1,self.p(208),x2,self.p(214))
+                self.canvas.itemconfigure(part, state='normal' if self.determinate and x2 > x1 else 'hidden')
             for item, (step, target) in list(self.text_fades.items()):
                 step += 1
                 fraction = min(1, step/5)
@@ -420,6 +449,8 @@ class Window:
         try:
             ROOT.mkdir(parents=True,exist_ok=True); DATA.mkdir(parents=True,exist_ok=True)
             old=current(); chosen=old
+            if old is not None:
+                self.emit('heading','Проверка обновлений…')
             try:
                 self.emit('status','Проверяем последнюю версию на GitHub…')
                 tag,url,digest,size=release_metadata()
@@ -448,6 +479,9 @@ class Window:
             self.emit('heading','Готово'); self.emit('status','Открываем UniBind…'); self.emit('indeterminate',None)
             env=dict(os.environ,UNIBIND_DATA_DIR=str(DATA))
             proc=subprocess.Popen([str(chosen)],cwd=str(chosen.parent),env=env)
+            self.emit('status','Удаляем старые версии…')
+            if cleanup_old_versions(chosen):
+                self.emit('warning','Не удалось удалить некоторые старые версии. Они будут проверены при следующем запуске.')
             self.emit('launched',None); proc.wait(); self.emit('exit',None)
         except Exception as exc: self.emit('error',str(exc))
 
