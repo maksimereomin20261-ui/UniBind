@@ -29,6 +29,7 @@ try {
 }
 #Include lib\WebView2\WebView2.ahk
 #Include lib\UniBindNeon.ahk
+#Include lib\UniBindTray.ahk
 
 ; Админка — включается ТОЛЬКО если SA:MP запускается от админа.
 ; Если у тебя бинды не работают в GTA — раскомментируй блок ниже.
@@ -239,13 +240,14 @@ SetupTray() {
     A_TrayMenu.Add("👤  Профиль игрока",         (*) => OpenProfileFromTray())
     A_TrayMenu.Add("📋  Переменные",            (*) => OpenVarsFromTray())
     A_TrayMenu.Add()
-    A_TrayMenu.Add("🗂  Папка бэкапов",           (*) => OpenBackupFolder())
+    A_TrayMenu.Add("🗂  Папка биндов",           (*) => TrayPopup_OpenBindsFolder())
     A_TrayMenu.Add("🖥  Оверлей (показать/скрыть)", (*) => ToggleOverlay())
     A_TrayMenu.Add("🎛  Настройка Overlay",      (*) => OpenOverlaySettingsFromTray())
     A_TrayMenu.Add("🔄  Перезагрузить",         (*) => Reload())
     A_TrayMenu.Add("⏸  Приостановить хоткеи",   (*) => ToggleSuspend())
     A_TrayMenu.Add()
     A_TrayMenu.Add("🚪  Выход",                 (*) => ExitApp())
+    OnMessage(0x404, TrayPopup_OnNotify)
 }
 
 ShowMainGui() {
