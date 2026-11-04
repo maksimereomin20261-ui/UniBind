@@ -11,25 +11,21 @@ permissions:
   actions: read
 jobs:
   check:
-    name: Проверить установщик на Windows
+    name: Проверить UniBind перед выпуском
     permissions:
       contents: read
-    uses: ./.github/workflows/verify-compact.yml
-  build:
-    name: Собрать UniBind
-    permissions:
-      contents: read
-    uses: ./.github/workflows/build.yml
+      actions: read
+    uses: ./.github/workflows/ci.yml
   release:
     name: Подготовить и выпустить обновление
     if: github.ref == 'refs/heads/main'
-    needs: [check, build]
+    needs: [check]
     runs-on: windows-latest
     permissions:
       contents: write
       actions: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: UniBind-Windows-unverified
           path: release-files

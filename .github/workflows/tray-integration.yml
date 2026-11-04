@@ -1,6 +1,7 @@
 name: Проверить все команды трея в UniBind
 on:
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -8,7 +9,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Скачать проверенный AutoHotkey
         shell: pwsh
         run: |
