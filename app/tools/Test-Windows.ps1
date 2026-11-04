@@ -3,6 +3,8 @@
 param(
     [string]$AutoHotkey = "$env:ProgramFiles\AutoHotkey\v2\AutoHotkey64.exe",
     [switch]$IncludeExe,
+    [switch]$NoDialog,
+    [ValidateRange(10, 600)][int]$TimeoutSeconds = 90,
     [string]$ResultsDirectory = (Join-Path (Split-Path $PSScriptRoot -Parent) 'windows-test-results')
 )
 $ErrorActionPreference = 'Stop'
@@ -13,6 +15,31 @@ $Scratch = Join-Path ([IO.Path]::GetTempPath()) ('UniBind-native-tests-' + [guid
 New-Item -ItemType Directory -Path $Scratch | Out-Null
 New-Item -ItemType Directory -Path $ResultsDirectory -Force | Out-Null
 $Summary = @()
+$PreviousDataDir = $env:UNIBIND_DATA_DIR
+if ($NoDialog) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class UniBindTestDialogs {
+    private delegate bool EnumWindowsProc(IntPtr window, IntPtr param);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr param);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int max);
+    [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    public static void Dismiss(uint processId) {
+        EnumWindows((window, param) => {
+            uint owner; GetWindowThreadProcessId(window, out owner);
+            var name = new StringBuilder(256); GetClassName(window, name, name.Capacity);
+            if (owner == processId && name.ToString() == "#32770")
+                PostMessage(window, 0x0010, IntPtr.Zero, IntPtr.Zero);
+            return true;
+        }, IntPtr.Zero);
+    }
+}
+'@
+}
+$env:UNIBIND_DATA_DIR = Join-Path $Scratch "data"
 try {
     foreach ($name in @('UniBind.ahk', 'ui', 'lib')) {
         Copy-Item -LiteralPath (Join-Path $Root $name) -Destination $Scratch -Recurse
@@ -36,7 +63,18 @@ try {
                 $Arguments = @($Test.Mode)
             }
             Write-Host "Running $Target $($Test.Mode). A native report dialog may need OK."
-            $Process = Start-Process -FilePath $Program -ArgumentList $Arguments -WorkingDirectory $Scratch -Wait -PassThru
+            $Process = Start-Process -FilePath $Program -ArgumentList $Arguments -WorkingDirectory $Scratch -PassThru
+            $Deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+            while (-not $Process.WaitForExit(500)) {
+                if ($NoDialog -and (Test-Path -LiteralPath $Report)) {
+                    [UniBindTestDialogs]::Dismiss([uint32]$Process.Id)
+                }
+                if ([DateTime]::UtcNow -ge $Deadline) {
+                    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+                    throw "Native test timed out: $Target $($Test.Mode)"
+                }
+            }
+            $Process.Refresh()
             $Text = if (Test-Path -LiteralPath $Report) { Get-Content -LiteralPath $Report -Raw -Encoding UTF8 } else { '' }
             $Passed = $Process.ExitCode -eq 0 -and $Text -match '(?m)^Failures:\s*0\s*$'
             $Summary += [pscustomobject]@{ Target = $Target; Mode = $Test.Mode; ExitCode = $Process.ExitCode; Passed = $Passed }
@@ -45,6 +83,7 @@ try {
         }
     }
 } finally {
+    $env:UNIBIND_DATA_DIR = $PreviousDataDir
     $Summary | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $ResultsDirectory 'summary.json') -Encoding UTF8
     if (Test-Path -LiteralPath $Scratch) { Remove-Item -LiteralPath $Scratch -Recurse -Force }
 }
