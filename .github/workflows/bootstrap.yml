@@ -1,0 +1,78 @@
+name: Подготовить исходники и собрать UniBind
+on:
+  push:
+    branches: [unibind-next]
+    paths: ['.github/workflows/bootstrap.yml']
+permissions:
+  contents: write
+jobs:
+  bootstrap:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: unibind-next
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Восстановить проект и проверить его целостность
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $parts = 1..6 | ForEach-Object { [IO.File]::ReadAllText("unibind-part$($_.ToString('00')).txt").Trim() }
+          $bytes = [Convert]::FromBase64String(($parts -join ''))
+          $zip = Join-Path $env:RUNNER_TEMP 'unibind-project.zip'
+          [IO.File]::WriteAllBytes($zip, $bytes)
+          $expected = 'e3ce70f096013c9f4768c69d61346c1a6e22ccf54fbe2f95c2e1489c93c3bc56'
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Archive hash mismatch' }
+          $dir = Join-Path $env:RUNNER_TEMP 'unibind-project'
+          Expand-Archive -Path $zip -DestinationPath $dir
+          git rm -f BUILD_LAUNCHER.bat README_GITHUB_RU.md UniBind.ico launcher.py requirements-build.txt unibind-part01.txt unibind-part02.txt unibind-part03.txt unibind-part04.txt unibind-part05.txt unibind-part06.txt .github/workflows/bootstrap.yml
+          if ($LASTEXITCODE -ne 0) { throw 'Could not remove temporary files' }
+          Get-ChildItem -LiteralPath (Join-Path $dir 'UniBind-project') -Force | Copy-Item -Destination . -Recurse -Force
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Add UniBind source and installer'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not commit source files' }
+          git push origin HEAD:unibind-next
+          if ($LASTEXITCODE -ne 0) { throw 'Could not push source files' }
+      - name: Скачать официальные инструменты и проверить их
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force .tools | Out-Null
+          $sources = @(
+            @{ url = 'https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.31/AutoHotkey_2.0.31.zip'; path = '.tools/ahk.zip'; sha = 'ca1a595aca4528755d8d4cd7fed23d497a37bd9a0b6892072612d68dee1bd00a' },
+            @{ url = 'https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a2/Ahk2Exe1.1.37.02a2.zip'; path = '.tools/compiler.zip'; sha = 'c29b8c3a5124850d79fc9e66e2ca79677c377d7f31631ad3022ba159c5d9e3be' }
+          )
+          foreach ($s in $sources) {
+            Invoke-WebRequest -Uri $s.url -OutFile $s.path
+            if ((Get-FileHash $s.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $s.sha) { throw 'Tool hash mismatch' }
+          }
+          Expand-Archive .tools/ahk.zip .tools/ahk
+          Expand-Archive .tools/compiler.zip .tools/compiler
+      - name: Собрать приложение и загрузчик
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install 'pyinstaller==6.11.1'
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller installation failed' }
+          New-Item -ItemType Directory -Force build/payload | Out-Null
+          & .tools/compiler/Ahk2Exe.exe /in app/UniBind.ahk /out build/payload/UniBind.exe /base .tools/ahk/AutoHotkey64.exe
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path build/payload/UniBind.exe)) { throw 'App compilation failed' }
+          Copy-Item app/ui build/payload/ui -Recurse
+          Copy-Item app/lib build/payload/lib -Recurse
+          Copy-Item app/THIRD_PARTY_NOTICES.md build/payload/
+          Copy-Item .tools/ahk/license.txt build/payload/LICENSE-AutoHotkey.txt
+          Compress-Archive -Path build/payload/* -DestinationPath build/UniBind-App.zip
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name UniBind_Setup --icon installer/UniBind.ico installer/launcher.py
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path dist/UniBind_Setup.exe)) { throw 'Launcher build failed' }
+          Copy-Item dist/UniBind_Setup.exe build/UniBind_Setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UniBind-Windows-unverified
+          path: |
+            build/UniBind-App.zip
+            build/UniBind_Setup.exe
+          if-no-files-found: error
