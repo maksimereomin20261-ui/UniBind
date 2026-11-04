@@ -12,7 +12,9 @@ class Cleanup(unittest.TestCase):
   self.patch=patch.multiple(m,ROOT=self.root,VERSIONS=self.root/'versions',STATE=self.root/'current.json',DATA=self.root/'data');self.patch.start();self.addCleanup(self.patch.stop)
   m.VERSIONS.mkdir();m.DATA.mkdir();(m.DATA/'binds.ini').write_text('my binds')
   self.a='a'*64; self.b='b'*64;self.c='c'*64
-  self.active=m.VERSIONS/self.a;self.active.mkdir();(self.active/'UniBind.exe').write_text('current')
+  self.active=m.VERSIONS/self.a;self.active.mkdir()
+  for name in m.REQUIRED_FILES:
+   f=self.active/name;f.parent.mkdir(parents=True,exist_ok=True);f.write_text('current')
   m.STATE.write_text(json.dumps({'digest':self.a,'tag':'test'}))
   for digest in (self.b,self.c):
    p=m.VERSIONS/digest;p.mkdir();(p/'UniBind.exe').write_text('old')
