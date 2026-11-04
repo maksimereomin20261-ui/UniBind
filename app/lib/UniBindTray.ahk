@@ -15,6 +15,7 @@ TrayPopup_Create() {
     if IsObject(TRAY_POPUP_GUI)
         return
     html := FileRead(UI_DIR "\tray.html", "UTF-8")
+    try LogLine("Tray HTML characters: " StrLen(html))
     trayGui := Gui("-Caption +ToolWindow +AlwaysOnTop -DPIScale", "UniBind tray")
     trayGui.BackColor := "0C0719"
     trayGui.MarginX := 0
@@ -111,10 +112,12 @@ TrayPopup_CheckFocus() {
 }
 TrayPopup_Ready(sender, args) {
     global TRAY_POPUP_VIEW
+    try LogLine("Tray navigation complete: " args.IsSuccess " error=" args.WebErrorStatus)
     try TRAY_POPUP_VIEW.PostWebMessageAsString(A_IsSuspended ? "suspended" : "active")
 }
 TrayPopup_Navigation(sender, args) {
     try {
+        LogLine("Tray navigation URI: " args.Uri)
         if (args.Uri != "about:blank")
             args.Cancel := true
     }
