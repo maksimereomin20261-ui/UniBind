@@ -1,6 +1,6 @@
 ; Кастомное меню значка в системном трее. Команды остаются в основном приложении.
 global TRAY_POPUP_GUI := 0, TRAY_POPUP_CTRL := 0, TRAY_POPUP_VIEW := 0
-global TRAY_POPUP_VISIBLE := false, TRAY_POPUP_BUSY := false
+global TRAY_POPUP_VISIBLE := false, TRAY_POPUP_BUSY := false, TRAY_POPUP_ALLOW_INITIAL := true
 
 TrayPopup_OnNotify(wParam, lParam, msg, hwnd) {
     ; AutoHotkey использует собственное уведомление значка 0x404. ЛКМ остаётся штатным.
@@ -15,7 +15,6 @@ TrayPopup_Create() {
     if IsObject(TRAY_POPUP_GUI)
         return
     html := FileRead(UI_DIR "\tray.html", "UTF-8")
-    try LogLine("Tray HTML characters: " StrLen(html))
     trayGui := Gui("-Caption +ToolWindow +AlwaysOnTop -DPIScale", "UniBind tray")
     trayGui.BackColor := "0C0719"
     trayGui.MarginX := 0
@@ -112,14 +111,20 @@ TrayPopup_CheckFocus() {
 }
 TrayPopup_Ready(sender, args) {
     global TRAY_POPUP_VIEW
-    try LogLine("Tray navigation complete: " args.IsSuccess " error=" args.WebErrorStatus)
     try TRAY_POPUP_VIEW.PostWebMessageAsString(A_IsSuspended ? "suspended" : "active")
 }
 TrayPopup_Navigation(sender, args) {
+    global TRAY_POPUP_ALLOW_INITIAL
     try {
-        LogLine("Tray navigation URI: " args.Uri)
-        if (args.Uri != "about:blank")
-            args.Cancel := true
+        ; NavigateToString начинает навигацию через data:, но отображает about:blank.
+        uri := args.Uri
+        if (TRAY_POPUP_ALLOW_INITIAL && InStr(uri, "data:text/html;") = 1) {
+            TRAY_POPUP_ALLOW_INITIAL := false
+            return
+        }
+        args.Cancel := true
+    } catch {
+        try args.Cancel := true
     }
 }
 TrayPopup_NewWindow(sender, args) {
