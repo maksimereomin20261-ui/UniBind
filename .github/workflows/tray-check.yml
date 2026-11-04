@@ -43,7 +43,7 @@ jobs:
           }
           try {
               OnMessage(0x404, TrayPopup_OnNotify)
-              PostMessage(0x404, 0x404, 0x205, , "ahk_id " A_ScriptHwnd)
+              DllCall("user32\PostMessageW", "Ptr", A_ScriptHwnd, "UInt", 0x404, "UPtr", 0x404, "Ptr", 0x205)
               Sleep(5000)
               if !IsObject(TRAY_POPUP_GUI) || !IsObject(TRAY_POPUP_VIEW)
                   Fail("Tray notification did not create WebView")
