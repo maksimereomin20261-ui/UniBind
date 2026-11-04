@@ -1,0 +1,65 @@
+name: Выпустить обновление UniBind
+on:
+  workflow_dispatch:
+    inputs:
+      test_only:
+        description: 'Пробный запуск: не публиковать обновление'
+        type: boolean
+        default: false
+permissions:
+  contents: write
+  actions: read
+jobs:
+  check:
+    name: Проверить установщик на Windows
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-compact.yml
+  build:
+    name: Собрать UniBind
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yml
+  release:
+    name: Подготовить и выпустить обновление
+    if: github.ref == 'refs/heads/main'
+    needs: [check, build]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: UniBind-Windows-unverified
+          path: release-files
+      - name: Проверить файлы
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($f in @('UniBind-App.zip', 'UniBind_Setup.exe')) {
+            if (-not (Test-Path "release-files/$f")) { throw "Missing asset $f" }
+            Get-FileHash "release-files/$f" -Algorithm SHA256
+          }
+          Copy-Item 'release-files/UniBind-App.zip' 'release-files/UniBind_Payload.zip'
+      - name: Опубликовать тестовое обновление
+        if: ${{ !inputs.test_only }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "update-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          @'
+          Тестовое обновление UniBind. Автоматические проверки загрузчика и сборка выполнены на Windows.
+          Полную работу биндера с игрой и на Windows 11 нужно проверять отдельно.
+          Для первой установки скачайте UniBind_Setup.exe. Приложение проверяет обновления при запуске через ярлык.
+          Если менялся сам загрузчик, закройте UniBind и один раз запустите новый Setup: он пока не обновляется автоматически.
+          WebView2 Runtime может потребоваться. UniBind_Payload.zip — совместимость со старым загрузчиком.
+          '@ | Set-Content -Encoding utf8 release-notes.txt
+          gh release create $tag release-files/UniBind_Setup.exe release-files/UniBind-App.zip release-files/UniBind_Payload.zip --target "$env:GITHUB_SHA" --title "UniBind — тестовое обновление $env:GITHUB_RUN_NUMBER" --notes-file release-notes.txt --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+      - name: Пробный запуск завершён без публикации
+        if: ${{ inputs.test_only }}
+        run: echo "Тестовый прогон завершён. Релиз не создан."
