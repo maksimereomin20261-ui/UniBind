@@ -17,14 +17,13 @@ if ($OutputDirectory.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [Stri
 $Stage = Join-Path $OutputDirectory ('UniBind-2027.10-beta.1-hf2-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
 $App = Join-Path $Stage 'UniBind'
 New-Item -ItemType Directory -Path $App -Force | Out-Null
-foreach ($Name in @('UniBind.ahk','ui','lib','tools','docs','README.md','BUILD_EXE.md','CHANGELOG.md','KNOWN_LIMITATIONS.md','THIRD_PARTY_NOTICES.md','RELEASE_CHECKLIST.md','START_HERE_RU.md')) {
+$Icon = Join-Path (Split-Path $Root -Parent) 'installer/UniBind.ico'
+& (Join-Path $PSScriptRoot 'Build-Payload.ps1') -Ahk2Exe $Ahk2Exe -AutoHotkey $AutoHotkey -OutputDirectory $App -Icon $Icon
+foreach ($Name in @('UniBind.ahk','tools','docs','README.md','BUILD_EXE.md','CHANGELOG.md','KNOWN_LIMITATIONS.md','RELEASE_CHECKLIST.md','START_HERE_RU.md')) {
     Copy-Item -LiteralPath (Join-Path $Root $Name) -Destination $App -Recurse
 }
 # The package deliberately excludes config, backups, logs, caches and local test results.
 $Exe = Join-Path $App 'UniBind.exe'
-$Arguments = @('/in', ('"{0}"' -f (Join-Path $Root 'UniBind.ahk')), '/out', ('"{0}"' -f $Exe), '/base', ('"{0}"' -f $AutoHotkey))
-$Compiler = Start-Process -FilePath $Ahk2Exe -ArgumentList $Arguments -WorkingDirectory $Root -Wait -PassThru
-if ($Compiler.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw 'Ahk2Exe failed or produced no EXE.' }
 & (Join-Path $App 'tools\Test-Windows.ps1') -AutoHotkey $AutoHotkey -IncludeExe -ResultsDirectory (Join-Path $Stage 'native-test-results')
 if ($ScanWithDefender) {
     if (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) { throw 'Microsoft Defender cmdlet is unavailable. Do not treat this as a passed scan.' }
