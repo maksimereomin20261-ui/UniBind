@@ -203,6 +203,12 @@ def cleanup_old_versions(active_exe):
             attr = getattr(entry.lstat(), 'st_file_attributes', 0)
             if entry.is_symlink() or attr & 0x400 or not entry.is_dir():
                 continue
+            # Old direct launches can have config, backups, logs or other personal
+            # files next to the application. Preserve any non-package content.
+            package_names = {'unibind.exe', 'ui', 'lib', 'third_party_notices.md', 'license-autohotkey.txt'}
+            if any(child.name.casefold() not in package_names for child in entry.iterdir()):
+                failed.append(entry.name)
+                continue
             shutil.rmtree(entry)
         except OSError:
             failed.append(entry.name)
@@ -481,7 +487,7 @@ class Window:
             proc=subprocess.Popen([str(chosen)],cwd=str(chosen.parent),env=env)
             self.emit('status','Удаляем старые версии…')
             if cleanup_old_versions(chosen):
-                self.emit('warning','Не удалось удалить некоторые старые версии. Они будут проверены при следующем запуске.')
+                self.emit('warning','Некоторые старые версии не удалены: файлы могут быть заняты или содержать личные данные. Они будут сохранены.')
             self.emit('launched',None); proc.wait(); self.emit('exit',None)
         except Exception as exc: self.emit('error',str(exc))
 
