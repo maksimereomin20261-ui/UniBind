@@ -42,7 +42,10 @@ class WindowsUI(unittest.TestCase):
 
     @staticmethod
     def destroy(w):
-        try: w.root.destroy()
+        try:
+            for callback in w.root.tk.call('after', 'info'):
+                w.root.after_cancel(callback)
+            w.root.destroy()
         except m.tk.TclError: pass
 
     def test_center_and_fixed_dimensions_at_three_scales(self):
