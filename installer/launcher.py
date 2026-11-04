@@ -156,120 +156,166 @@ def ensure_launcher_installed():
 
 
 class Window:
-    """Installer screen inspired by UniBind's dark-violet interface."""
+    """Compact installer UI; worker and on-disk update logic remain unchanged."""
     VERSION = '2027.10 · Beta 1 HF2'
-    def __init__(self):
+    WIDTH, HEIGHT = 500, 310
+
+    def __init__(self, autostart=True, run_loop=True):
         self.root = tk.Tk()
+        self.root.withdraw()
         self.root.title('UniBind — установка и обновление')
-        self.root.geometry('1020x580')
         self.root.resizable(False, False)
-        self.root.configure(bg='#0c0a19')
-        self.root.protocol('WM_DELETE_WINDOW', self.close)
-        self.root.bind('<Escape>', lambda _event: self.close())
-        self.canvas = tk.Canvas(self.root, width=1020, height=580, bg='#0c0a19',
+        self.root.overrideredirect(True)
+        self.root.configure(bg='#010203')
+        # The unique colour only appears outside the rounded window silhouette.
+        try:
+            self.root.wm_attributes('-transparentcolor', '#010203')
+        except tk.TclError:
+            pass
+        self.scale = self.system_scale()
+        w, h = self.p(self.WIDTH), self.p(self.HEIGHT)
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        x, y = max(0, (sw-w)//2), max(0, (sh-h)//2)
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
+        self.canvas = tk.Canvas(self.root, width=w, height=h, bg='#010203',
                                 highlightthickness=0, bd=0)
         self.canvas.pack(fill='both', expand=True)
+        self.root.protocol('WM_DELETE_WINDOW', self.close)
+        self.root.bind('<Escape>', lambda _event: self.close())
+        self.root.bind('<Map>', self.on_map)
         self.events = queue.Queue()
         self.done = False
         self.determinate = False
+        self.actual_progress = 0.0
+        self.display_progress = 0.0
         self.spinner_angle = 0
+        self.minimized = False
+        self.text_fades = {}
         self.draw_ui()
-        self.root.after(100, self.poll)
-        self.root.after(80, self.animate)
-        threading.Thread(target=self.worker, daemon=True).start()
-        self.root.mainloop()
+        self.root.deiconify()
+        self.root.after(50, self.poll)
+        self.root.after(40, self.animate)
+        if autostart:
+            threading.Thread(target=self.worker, daemon=True).start()
+        if run_loop:
+            self.root.mainloop()
 
-    def rounded(self, x1, y1, x2, y2, radius, fill, outline=None, width=1):
-        points = (x1+radius,y1, x2-radius,y1, x2,y1, x2,y1+radius,
-                  x2,y2-radius, x2,y2, x2-radius,y2, x1+radius,y2,
-                  x1,y2, x1,y2-radius, x1,y1+radius, x1,y1)
-        return self.canvas.create_polygon(points, smooth=True, splinesteps=24,
-                                          fill=fill, outline=outline or fill, width=width)
+    @staticmethod
+    def system_scale():
+        if os.name == 'nt':
+            try:
+                return min(2.5, max(1.0, ctypes.windll.user32.GetDpiForSystem() / 96.0))
+            except (AttributeError, OSError):
+                pass
+        return 1.0
 
-    def label(self, x, y, text, size, color, weight='normal', **kwargs):
-        return self.canvas.create_text(x, y, text=text, fill=color, anchor='nw',
-                                       font=('Segoe UI', -size, weight), **kwargs)
+    def p(self, value):
+        return round(value * self.scale)
+
+    def shape(self, coords):
+        return tuple(self.p(v) for v in coords)
+
+    def rounded(self, x1, y1, x2, y2, r, fill, outline=None, width=1, **kw):
+        points = (x1+r,y1, x2-r,y1, x2,y1, x2,y1+r, x2,y2-r, x2,y2,
+                  x2-r,y2, x1+r,y2, x1,y2, x1,y2-r, x1,y1+r, x1,y1)
+        return self.canvas.create_polygon(*self.shape(points), smooth=True, splinesteps=24,
+                                          fill=fill, outline=outline or fill, width=self.p(width), **kw)
+
+    def text(self, x, y, value, size, color, weight='normal', **kw):
+        return self.canvas.create_text(self.p(x), self.p(y), text=value, fill=color,
+                                       font=('Segoe UI', -self.p(size), weight), **kw)
 
     def draw_ui(self):
         c = self.canvas
-        # Structural surfaces and restrained decorative violet ribbons.
-        c.create_rectangle(0, 0, 1020, 580, fill='#0b0918', outline='')
-        c.create_polygon(700,0,1020,0,1020,255,965,245,900,232,845,205,770,158,
-                         fill='#130e2c', outline='', smooth=True)
-        c.create_polygon(1020,95,1020,219,940,212,870,246,808,284,745,300,800,260,
-                         fill='#21104c', outline='', smooth=True)
-        c.create_rectangle(0, 0, 1020, 63, fill='#100d20', outline='')
-        c.create_line(0, 63, 1020, 63, fill='#292044')
-        c.create_rectangle(0, 64, 196, 580, fill='#100d20', outline='')
-        c.create_line(196, 64, 196, 580, fill='#292044')
-        self.label(27, 14, 'U', 30, '#9b68ff', 'bold')
-        self.label(63, 20, 'UniBind', 21, '#f8f5ff', 'bold')
-        self.label(760, 25, 'УСТАНОВКА И ОБНОВЛЕНИЕ', 11, '#a49abc', 'bold')
-        # Static sidebar entries match the reference but do not imitate controls.
-        self.rounded(14, 93, 181, 139, 10, '#32206c')
-        c.create_rectangle(14, 94, 18, 138, fill='#a479ff', outline='')
-        c.create_line(31, 116, 43, 104, 55, 116, fill='#f9f7ff', width=2)
-        c.create_line(34, 114, 34, 126, 52, 126, 52, 114, fill='#f9f7ff', width=2)
-        self.label(64, 106, 'Главная', 16, '#f8f6ff', 'bold')
-        c.create_oval(35, 162, 51, 178, outline='#aaa1c3', width=2)
-        c.create_oval(41, 168, 45, 172, fill='#aaa1c3', outline='')
-        for dx, dy in ((0,-11),(0,11),(-11,0),(11,0),(-8,-8),(8,-8),(-8,8),(8,8)):
-            c.create_line(43+dx*0.7, 170+dy*0.7, 43+dx, 170+dy, fill='#aaa1c3', width=2)
-        self.label(64, 164, 'Настройки', 15, '#aaa1c3')
-        for gx, gy in ((33,216),(44,216),(33,227),(44,227)):
-            c.create_rectangle(gx, gy, gx+7, gy+7, outline='#aaa1c3', width=2)
-        self.label(64, 219, 'Бинды', 15, '#aaa1c3')
-        c.create_oval(33, 278, 51, 296, outline='#aaa1c3', width=2)
-        c.create_text(42, 287, text='i', fill='#c1b4d8', font=('Segoe UI', -12, 'bold'))
-        about = tk.Button(self.root, text='О программе', command=self.show_about,
-                          font=('Segoe UI', -15), fg='#ddd4f2', bg='#100d20',
-                          activeforeground='#ffffff', activebackground='#24194a',
-                          relief='flat', bd=0, cursor='hand2', anchor='w',
-                          highlightthickness=1, highlightbackground='#100d20')
-        c.create_window(61, 268, window=about, anchor='nw', width=115, height=38)
-        self.label(25, 329, 'Настройки и бинды\nдоступны в приложении', 11, '#aaa1c3',
-                   width=150, justify='left')
-        c.create_line(24, 491, 171, 491, fill='#302447')
-        self.net_dot = c.create_oval(25, 513, 35, 523, fill='#aba0c2', outline='')
-        self.net_text = self.label(44, 509, 'Проверяем связь', 13, '#cfc7de')
-        self.label(25, 541, 'Версия ' + self.VERSION, 11, '#aaa1c3')
-        # Brand mark and heading.
-        self.rounded(235, 103, 333, 201, 17, '#201045', '#52339d')
-        c.create_text(284, 152, text='U', fill='#ac82ff', font=('Segoe UI', -70, 'bold'))
-        self.label(364, 105, 'UniBind', 50, '#f6f1ff', 'bold')
-        self.label(367, 171, 'Установка и обновление', 23, '#b2a5d6')
-        self.rounded(222, 252, 995, 476, 19, '#171329', '#30234d', 2)
-        c.create_oval(252, 289, 328, 365, outline='#30245a', width=8)
-        self.ring = c.create_arc(252, 289, 328, 365, start=45, extent=270,
-                                 style='arc', outline='#9863ff', width=8)
-        self.heading = self.label(352, 291, 'Подготовка к установке…', 22, '#f8f5ff', 'bold', width=590)
-        self.status = self.label(352, 327, 'Проверяем последнюю версию на GitHub', 16, '#b5a9d0', width=590)
-        self.rounded(255, 392, 907, 404, 6, '#2b2441')
-        self.bar = c.create_rectangle(255, 392, 255, 404, fill='#9560ff', outline='')
-        self.percent = self.label(925, 384, '—', 17, '#ae83ff', 'bold')
-        c.create_oval(256, 428, 276, 448, outline='#aa9aca', width=2)
-        c.create_text(266, 438, text='i', fill='#c1b4d8', font=('Segoe UI', -13, 'bold'))
-        self.label(288, 429, 'Не закрывайте окно', 14, '#b8adc9')
-        self.label(225, 512, 'Ваши настройки и бинды сохраняются отдельно от обновлений',
-                   13, '#b8adc9', width=760)
+        self.rounded(1, 1, 499, 309, 12, '#0b081c', '#56319a', 1)
+        # Understated, clipped-at-the-edges dark violet curves, matching the reference.
+        c.create_polygon(*self.shape((2,39,130,39,112,52,91,72,62,90,2,107)),
+                         fill='#110b29', outline='', smooth=True)
+        c.create_polygon(*self.shape((499,63,499,178,445,168,405,184,370,207,394,169,433,134,464,105)),
+                         fill='#150b33', outline='', smooth=True)
+        c.create_line(*self.shape((2,38,498,38)), fill='#231a3c')
+        self.text(19, 19, 'U', 24, '#9b63ff', 'bold')
+        self.text(41, 19, 'UniBind', 15, '#f6f3ff', 'bold', anchor='w')
+        # Canvas buttons are real, focusable controls with generous click targets.
+        for name, x in [('minimize', 444), ('close', 478)]:
+            c.create_rectangle(*self.shape((x-16,3,x+16,35)), fill='#0b081c', outline='', tags=(name,))
+        c.create_line(*self.shape((439,19,449,19)), fill='#ddd3f3', width=self.p(1), tags=('minimize',))
+        c.create_line(*self.shape((473,14,483,24)), fill='#ddd3f3', width=self.p(1), tags=('close',))
+        c.create_line(*self.shape((483,14,473,24)), fill='#ddd3f3', width=self.p(1), tags=('close',))
+        c.tag_bind('minimize', '<Button-1>', lambda _e: self.minimize())
+        c.tag_bind('close', '<Button-1>', lambda _e: self.close())
+        c.tag_bind('minimize', '<Enter>', lambda _e: c.configure(cursor='hand2'))
+        c.tag_bind('close', '<Enter>', lambda _e: c.configure(cursor='hand2'))
+        c.tag_bind('minimize', '<Leave>', lambda _e: c.configure(cursor=''))
+        c.tag_bind('close', '<Leave>', lambda _e: c.configure(cursor=''))
+        self.rounded(211, 52, 289, 130, 16, '#171032')
+        self.rounded(214, 55, 286, 127, 14, '#0a0719', '#6330b9')
+        self.text(250, 91, 'U', 46, '#9556ff', 'bold')
+        self.text(250, 148, 'UniBind', 34, '#e5dbfc', 'bold')
+        self.heading = self.text(250, 180, 'Подготовка к установке…', 16, '#b6a5d9', width=self.p(450))
+        # Soft glow and a slim track. Segment colours create a restrained gradient.
+        self.rounded(41, 205, 423, 217, 6, '#21113e')
+        self.rounded(43, 207, 421, 215, 4, '#211738', '#2a1b4c')
+        self.bar_parts = []
+        for i in range(42):
+            t=i/41
+            color = '#%02x%02x%02x' % (int(105+57*t), int(49+40*t), 246+int(9*t))
+            part=c.create_rectangle(self.p(44),self.p(208),self.p(44),self.p(214), fill=color, outline='')
+            self.bar_parts.append(part)
+        self.percent = self.text(451, 211, '', 15, '#a975ff', 'bold')
+        # Spinner is a true indeterminate activity indicator, not a progress gauge.
+        c.create_oval(*self.shape((151, 235, 165, 249)), outline='#35245e', width=self.p(2))
+        self.ring = c.create_arc(*self.shape((151, 235, 165, 249)), start=20, extent=100,
+                                 style='arc', outline='#a063ff', width=self.p(2))
+        self.status = self.text(176, 242, 'Проверяем версию на GitHub…', 13, '#b9a9d5', anchor='w', width=self.p(290))
+        c.create_line(*self.shape((2,269,498,269)), fill='#20172e')
+        c.create_oval(*self.shape((142,282,154,294)), outline='#9f88c6', width=self.p(1))
+        self.text(148, 288, 'i', 9, '#b7a4d3', 'bold')
+        self.text(166, 288, 'Пожалуйста, не закрывайте окно', 12, '#a998c6', anchor='w')
 
-    def show_about(self):
-        messagebox.showinfo('О программе',
-            'UniBind ' + self.VERSION + '\n\nУстановка и обновление через GitHub.\n'
-            'Разделы «Настройки» и «Бинды» доступны в самой программе.')
+    def on_map(self, _event):
+        if self.minimized and self.root.state() == 'normal':
+            self.minimized = False
+            self.root.overrideredirect(True)
+
+    def minimize(self):
+        # Tk requires a window-manager frame while iconifying. Restore our frameless
+        # window as soon as it is mapped again.
+        self.minimized = True
+        self.root.overrideredirect(False)
+        self.root.iconify()
+
+    def set_text(self, item, value, target):
+        # New strings fade in from the dark background; pending updates coalesce.
+        self.canvas.itemconfigure(item, text=value, fill='#44375e')
+        self.text_fades[item] = (0, target)
 
     def animate(self):
         if not self.done:
-            if not self.determinate:
-                self.spinner_angle = (self.spinner_angle - 18) % 360
-                self.canvas.itemconfigure(self.ring, start=self.spinner_angle, extent=270)
-            self.root.after(80, self.animate)
+            self.spinner_angle = (self.spinner_angle - 16) % 360
+            self.canvas.itemconfigure(self.ring, start=self.spinner_angle)
+            self.display_progress += (self.actual_progress-self.display_progress)*0.24
+            if abs(self.actual_progress-self.display_progress)<0.001:
+                self.display_progress=self.actual_progress
+            for i, part in enumerate(self.bar_parts):
+                left = 44+376*i/42
+                right = min(44+376*(i+1)/42,44+376*self.display_progress)
+                self.canvas.coords(part, self.p(left),self.p(208),self.p(max(left,right)),self.p(214))
+            for item, (step, target) in list(self.text_fades.items()):
+                step += 1
+                fraction = min(1, step/5)
+                rgb0 = (68,55,94); rgb1 = tuple(int(target[i:i+2],16) for i in (1,3,5))
+                color = '#'+''.join(f'{round(a+(b-a)*fraction):02x}' for a,b in zip(rgb0,rgb1))
+                self.canvas.itemconfigure(item, fill=color)
+                if fraction >= 1: del self.text_fades[item]
+                else: self.text_fades[item] = (step,target)
+            self.root.after(40, self.animate)
 
     def close(self):
         if self.done:
             self.root.destroy()
         else:
-            messagebox.showinfo('UniBind', 'Дождитесь завершения установки или проверки обновления.')
+            messagebox.showinfo('UniBind', 'Дождитесь завершения установки или проверки обновления.', parent=self.root)
 
     def emit(self, kind, value):
         self.events.put((kind, value))
@@ -279,28 +325,23 @@ class Window:
             while True:
                 kind, value = self.events.get_nowait()
                 if kind == 'status':
-                    self.canvas.itemconfigure(self.status, text=value)
+                    self.set_text(self.status, value, '#b9a9d5')
                 elif kind == 'heading':
-                    self.canvas.itemconfigure(self.heading, text=value)
-                elif kind == 'connection':
-                    color, text = ('#34d883', 'Связь с GitHub есть') if value else ('#e3a960', 'Ошибка проверки')
-                    self.canvas.itemconfigure(self.net_dot, fill=color)
-                    self.canvas.itemconfigure(self.net_text, text=text)
+                    self.set_text(self.heading, value, '#b6a5d9')
                 elif kind == 'indeterminate':
                     self.determinate = False
-                    self.canvas.coords(self.bar, 255, 392, 255, 404)
-                    self.canvas.itemconfigure(self.percent, text='—')
+                    self.actual_progress = 0
+                    self.display_progress = 0
+                    self.canvas.itemconfigure(self.percent, text='')
                 elif kind == 'progress':
-                    value = max(0.0, min(1.0, value))
                     self.determinate = True
-                    self.canvas.coords(self.bar, 255, 392, 255 + 652 * value, 404)
-                    self.canvas.itemconfigure(self.percent, text=f'{round(value * 100)}%')
-                    self.canvas.itemconfigure(self.ring, start=90, extent=-359 * value)
+                    self.actual_progress = max(0.0, min(1.0, value))
+                    self.canvas.itemconfigure(self.percent, text=f'{int(self.actual_progress*100)}%')
                 elif kind == 'warning':
-                    messagebox.showwarning('UniBind', value)
+                    messagebox.showwarning('UniBind', value, parent=self.root)
                 elif kind == 'error':
                     self.done = True
-                    messagebox.showerror('UniBind', value)
+                    messagebox.showerror('UniBind', value, parent=self.root)
                     self.root.destroy()
                     return
                 elif kind == 'launched':
@@ -311,7 +352,7 @@ class Window:
                     return
         except queue.Empty:
             pass
-        self.root.after(100, self.poll)
+        self.root.after(50, self.poll)
     def worker(self):
         try:
             ROOT.mkdir(parents=True,exist_ok=True); DATA.mkdir(parents=True,exist_ok=True)
@@ -341,7 +382,7 @@ class Window:
             except Exception as e: self.emit('warning','Программа установлена, но ярлык не создан: '+str(e))
             if not webview_installed():
                 self.emit('warning','Не найден Microsoft Edge WebView2 Runtime. Если UniBind не откроется, установите Runtime с официального сайта: https://developer.microsoft.com/microsoft-edge/webview2/')
-            self.emit('heading','Готово'); self.emit('status','Открываем UniBind…'); self.emit('progress',1)
+            self.emit('heading','Готово'); self.emit('status','Открываем UniBind…'); self.emit('indeterminate',None)
             env=dict(os.environ,UNIBIND_DATA_DIR=str(DATA))
             proc=subprocess.Popen([str(chosen)],cwd=str(chosen.parent),env=env)
             self.emit('launched',None); proc.wait(); self.emit('exit',None)
@@ -350,6 +391,11 @@ class Window:
 
 def main():
     if os.name != 'nt': raise RuntimeError('UniBind предназначен для Windows')
+    # Per-monitor DPI awareness is set before creating any Tk windows.
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4 & ((1 << (ctypes.sizeof(ctypes.c_void_p)*8)) - 1)))
+    except (AttributeError, OSError):
+        pass
     kernel=ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateMutexW.argtypes=[ctypes.c_void_p,ctypes.c_bool,ctypes.c_wchar_p]; kernel.CreateMutexW.restype=ctypes.c_void_p
     handle=kernel.CreateMutexW(None,False,'Local\\UniBindLauncherSingleton')
