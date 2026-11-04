@@ -1,0 +1,66 @@
+name: Проверки UniBind
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  installer:
+    name: Тесты установщика
+    uses: ./.github/workflows/verify-compact.yml
+  build:
+    name: Собрать пакет
+    uses: ./.github/workflows/build.yml
+  tray:
+    name: Меню трея на Windows
+    uses: ./.github/workflows/tray-integration.yml
+  browser:
+    name: Интерфейс и статическая проверка
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+      - run: npm install --no-save --ignore-scripts playwright@1.49.1
+      - run: npx playwright install --with-deps chromium
+      - run: node app/tests/browser-smoke.cjs
+      - run: node app/tests/regression-ui.cjs
+      - run: python3 app/tests/check-ahk-branches.py
+  native:
+    name: Самотесты и проверка пакета на Windows
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: UniBind-Windows-unverified
+          path: release-files
+      - name: Проверить архив реальным загрузчиком
+        run: python installer/verify_package.py release-files/UniBind-App.zip
+      - name: Скачать проверенный AutoHotkey
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.31/AutoHotkey_2.0.31.zip' -OutFile ahk.zip
+          if ((Get-FileHash ahk.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'ca1a595aca4528755d8d4cd7fed23d497a37bd9a0b6892072612d68dee1bd00a') { throw 'SHA-256 mismatch' }
+          Expand-Archive ahk.zip .tools/ahk
+          Expand-Archive release-files/UniBind-App.zip .tools/payload
+          Copy-Item .tools/payload/UniBind.exe app/UniBind.exe
+      - name: Проверить исходник и собранный EXE
+        shell: pwsh
+        run: ./app/tools/Test-Windows.ps1 -AutoHotkey (Resolve-Path .tools/ahk/AutoHotkey64.exe).Path -IncludeExe -NoDialog -ResultsDirectory (Join-Path $env:RUNNER_TEMP 'unibind-native-results')
+      - name: Сохранить отчёты
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: UniBind-native-test-results
+          path: ${{ runner.temp }}/unibind-native-results
+          if-no-files-found: warn
