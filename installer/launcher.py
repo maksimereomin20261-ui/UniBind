@@ -134,7 +134,7 @@ def extract_package(archive, destination):
         for item in z.infolist():
             name = item.filename
             parts = PurePosixPath(name).parts
-            if (not parts or name.startswith('/') or '\\' in name or any(x in ('.','..') or ':' in x for x in parts)
+            if (not parts or item.orig_filename != name or name.startswith('/') or '\\' in item.orig_filename or any(x in ('.','..') or ':' in x for x in parts)
                     or parts[0] not in allowed or item.flag_bits & 1):
                 raise ValueError('Недопустимый путь внутри пакета')
             key = name.rstrip('/').casefold()
