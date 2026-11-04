@@ -38,7 +38,8 @@ jobs:
           $src = (Resolve-Path 'app/UniBind.ahk').Path
           $base = (Resolve-Path '.tools/ahk/AutoHotkey64.exe').Path
           $target = Join-Path $PWD 'build/payload/UniBind.exe'
-          $params = @('/in', ('"{0}"' -f $src), '/out', ('"{0}"' -f $target), '/base', ('"{0}"' -f $base), '/silent', 'verbose')
+          $icon = (Resolve-Path 'installer/UniBind.ico').Path
+          $params = @('/in', ('"{0}"' -f $src), '/out', ('"{0}"' -f $target), '/base', ('"{0}"' -f $base), '/icon', ('"{0}"' -f $icon), '/silent', 'verbose')
           $process = Start-Process -FilePath $compiler -ArgumentList $params -Wait -PassThru -RedirectStandardOutput 'build/compile-out.txt' -RedirectStandardError 'build/compile-err.txt'
           if (Test-Path 'build/compile-out.txt') { Get-Content 'build/compile-out.txt' }
           if (Test-Path 'build/compile-err.txt') { Get-Content 'build/compile-err.txt' }
