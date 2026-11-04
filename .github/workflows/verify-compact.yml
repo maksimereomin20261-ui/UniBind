@@ -1,5 +1,6 @@
 name: Verify compact installer on Windows
 on:
+  workflow_call:
   push:
     branches: [main]
     paths: ['installer/**', '.github/workflows/verify-compact.yml']
