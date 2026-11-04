@@ -1,0 +1,81 @@
+name: Проверить меню трея на Windows
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tray-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Скачать AutoHotkey
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.31/AutoHotkey_2.0.31.zip' -OutFile ahk.zip
+          if ((Get-FileHash ahk.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'ca1a595aca4528755d8d4cd7fed23d497a37bd9a0b6892072612d68dee1bd00a') { throw 'SHA-256 mismatch' }
+          Expand-Archive ahk.zip .tools/ahk
+      - name: Проверить окно, сообщение трея и действия
+        shell: pwsh
+        run: |
+          $test = @'
+          #Requires AutoHotkey v2.0
+          #SingleInstance Force
+          #Include ..\lib\WebView2\WebView2.ahk
+          #Include ..\lib\UniBindTray.ahk
+          global ROOT_DIR := A_ScriptDir "\.."
+          global UI_DIR := ROOT_DIR "\ui"
+          global PROFILES_DIR := A_Temp "\UniBind-tray-test\profiles"
+          global lastAction := ""
+          LogLine(text) => FileAppend(text "`n", "*")
+          ShowMainGui() => SetAction("open")
+          OpenSettingsFromTray() => SetAction("settings")
+          OpenProfileFromTray() => SetAction("profile")
+          OpenVarsFromTray() => SetAction("variables")
+          ToggleOverlay() => SetAction("overlay")
+          OpenOverlaySettingsFromTray() => SetAction("overlay-settings")
+          ToggleSuspend() => SetAction("suspend")
+          SetAction(name) {
+              global lastAction := name
+          }
+          Fail(message) {
+              FileAppend("FAIL: " message "`n", "*")
+              ExitApp(1)
+          }
+          try {
+              OnMessage(0x404, TrayPopup_OnNotify)
+              PostMessage(0x404, 0x404, 0x205, , "ahk_id " A_ScriptHwnd)
+              Sleep(5000)
+              if !IsObject(TRAY_POPUP_GUI) || !IsObject(TRAY_POPUP_VIEW)
+                  Fail("Tray notification did not create WebView")
+              if !TRAY_POPUP_VISIBLE
+                  Fail("Tray window did not remain visible")
+              for action in ["open", "settings", "profile", "variables", "overlay", "overlay-settings", "suspend"] {
+                  lastAction := ""
+                  TrayPopup_Show() ; toggle closed if still open
+                  if !TRAY_POPUP_VISIBLE
+                      TrayPopup_Show()
+                  Sleep(400)
+                  TRAY_POPUP_VIEW.ExecuteScriptAsync("document.querySelector('[data-action=" action "]').click()").await2()
+                  Sleep(400)
+                  if (lastAction != action)
+                      Fail("Button not routed: " action " got " lastAction)
+                  if TRAY_POPUP_VISIBLE
+                      Fail("Menu remained open after " action)
+              }
+              TrayPopup_Show()
+              Sleep(400)
+              TrayPopup_Dispatch("dismiss")
+              if TRAY_POPUP_VISIBLE
+                  Fail("Dismiss failed")
+              FileAppend("PASS: tray notification, window, seven buttons and dismiss`n", "*")
+              ExitApp(0)
+          } catch as err {
+              Fail(err.Message " at " err.File ":" err.Line)
+          }
+          '@
+          Set-Content -Path 'app/tests/tray-smoke.ahk' -Value $test -Encoding utf8
+          $p = Start-Process -FilePath (Resolve-Path '.tools/ahk/AutoHotkey64.exe') -ArgumentList @('/ErrorStdOut', (Resolve-Path 'app/tests/tray-smoke.ahk')) -RedirectStandardOutput tray-test-out.txt -RedirectStandardError tray-test-err.txt -PassThru
+          if (!$p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; throw 'Tray test timed out' }
+          Get-Content tray-test-out.txt
+          Get-Content tray-test-err.txt
+          if ($p.ExitCode -ne 0) { throw "Tray test failed: $($p.ExitCode)" }
