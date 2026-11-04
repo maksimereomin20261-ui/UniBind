@@ -61,6 +61,7 @@ class WindowsUI(unittest.TestCase):
 
     def test_progress_unknown_to_real_and_status_transitions(self):
         w=self.make_window()
+        self.assertTrue(all(w.canvas.itemcget(part,'state') == 'hidden' for part in w.bar_parts))
         w.emit('heading','Загрузка UniBind'); w.emit('status','Загрузка файла…'); w.emit('progress',0.68); w.poll()
         self.assertEqual(w.canvas.itemcget(w.percent,'text'),'68%')
         self.assertAlmostEqual(w.actual_progress,0.68)
@@ -68,9 +69,11 @@ class WindowsUI(unittest.TestCase):
         self.assertEqual(w.canvas.itemcget(w.status,'text'),'Загрузка файла…')
         for _ in range(60): w.animate()
         self.assertAlmostEqual(w.display_progress,0.68,places=2)
+        self.assertTrue(any(w.canvas.itemcget(part,'state') == 'normal' for part in w.bar_parts))
         w.emit('heading','Установка UniBind'); w.emit('status','Распаковываем файлы…'); w.emit('indeterminate',None); w.poll(); w.animate()
         self.assertEqual(w.canvas.itemcget(w.percent,'text'),'')
         self.assertFalse(w.determinate)
+        self.assertTrue(all(w.canvas.itemcget(part,'state') == 'hidden' for part in w.bar_parts))
         self.assertEqual(w.canvas.itemcget(w.heading,'text'),'Установка UniBind')
         w.emit('heading','Готово'); w.emit('status','Открываем UniBind…'); w.poll()
         self.assertEqual(w.canvas.itemcget(w.heading,'text'),'Готово')
