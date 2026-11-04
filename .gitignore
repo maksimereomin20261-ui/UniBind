@@ -1,0 +1,12 @@
+app/config/
+app/backups/
+app/logs/
+app/config_backup*/
+app/doctor_config.ini
+app/*-self-test.txt
+app/overlay-gui-test.txt
+app/tests/*-results.json
+build/
+dist/
+__pycache__/
+*.pyc

@@ -1,0 +1,14 @@
+# Личные пользовательские данные и резервные копии
+/config/
+/backups/
+/logs/
+/config_backup*/
+/doctor_config.ini
+# Локальные результаты и сборки
+/*-self-test.txt
+/overlay-gui-test.txt
+/tests/*-results.json
+/windows-test-results/
+/dist/
+/build/
+*.tmp
