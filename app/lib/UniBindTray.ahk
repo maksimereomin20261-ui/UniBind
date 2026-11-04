@@ -1,32 +1,40 @@
 ; Кастомное меню значка в системном трее. Команды остаются в основном приложении.
 global TRAY_POPUP_GUI := 0, TRAY_POPUP_CTRL := 0, TRAY_POPUP_VIEW := 0
-global TRAY_POPUP_VISIBLE := false, TRAY_POPUP_BUSY := false, TRAY_POPUP_ALLOW_INITIAL := true
+global TRAY_POPUP_VISIBLE := false, TRAY_POPUP_BUSY := false, TRAY_POPUP_ALLOW_INITIAL := true, TRAY_POPUP_READY := false
+global TRAY_POPUP_CLICK_X := 0, TRAY_POPUP_CLICK_Y := 0, TRAY_POPUP_HAS_ANCHOR := false
 
 TrayPopup_OnNotify(wParam, lParam, msg, hwnd) {
-    ; AutoHotkey использует собственное уведомление значка 0x404. ЛКМ остаётся штатным.
+    global TRAY_POPUP_CLICK_X, TRAY_POPUP_CLICK_Y, TRAY_POPUP_HAS_ANCHOR
+    ; Запоминаем место клика до асинхронной инициализации WebView.
     if (hwnd = A_ScriptHwnd && lParam = 0x0205) { ; WM_RBUTTONUP
+        pt := Buffer(8, 0)
+        if DllCall("user32\GetCursorPos", "Ptr", pt) {
+            TRAY_POPUP_CLICK_X := NumGet(pt, 0, "Int"), TRAY_POPUP_CLICK_Y := NumGet(pt, 4, "Int")
+            TRAY_POPUP_HAS_ANCHOR := true
+        }
         SetTimer(TrayPopup_Show, -1)
         return 0
     }
 }
 
 TrayPopup_Create() {
-    global TRAY_POPUP_GUI, TRAY_POPUP_CTRL, TRAY_POPUP_VIEW, ROOT_DIR, UI_DIR
+    global TRAY_POPUP_GUI, TRAY_POPUP_CTRL, TRAY_POPUP_VIEW, TRAY_POPUP_ALLOW_INITIAL, TRAY_POPUP_READY, ROOT_DIR, UI_DIR
     if IsObject(TRAY_POPUP_GUI)
         return
+    TRAY_POPUP_ALLOW_INITIAL := true, TRAY_POPUP_READY := false
     html := FileRead(UI_DIR "\tray.html", "UTF-8")
     trayGui := Gui("-Caption +ToolWindow +AlwaysOnTop -DPIScale", "UniBind tray")
-    trayGui.BackColor := "0C0719"
+    trayGui.BackColor := "1C1B20"
     trayGui.MarginX := 0
     trayGui.MarginY := 0
     try {
         trayGui.OnEvent("Escape", (*) => TrayPopup_Hide())
-        trayGui.Show("Hide w350 h415")
+        trayGui.Show("Hide w250 h350")
         loader := ROOT_DIR "\lib\WebView2\" (A_PtrSize * 8) "bit\WebView2Loader.dll"
         userData := A_AppData "\..\Local\UniBind\WebView2"
-        ctrl := WebView2.CreateControllerAsync(trayGui.Hwnd, 0, userData, "", loader).await2()
+        ctrl := WebView2.CreateControllerAsync(trayGui.Hwnd, 0, userData, "", loader).await2(6000)
         view := ctrl.CoreWebView2
-        try ctrl.DefaultBackgroundColor := 0xFF19070C
+        try ctrl.DefaultBackgroundColor := 0xFF201B1C
         try view.Settings.AreBrowserAcceleratorKeysEnabled := false
         try view.Settings.AreDefaultContextMenusEnabled := false
         try view.Settings.AreDevToolsEnabled := false
@@ -50,6 +58,7 @@ TrayPopup_Create() {
 
 TrayPopup_Show() {
     global TRAY_POPUP_GUI, TRAY_POPUP_CTRL, TRAY_POPUP_VIEW, TRAY_POPUP_VISIBLE, TRAY_POPUP_BUSY
+    global TRAY_POPUP_CLICK_X, TRAY_POPUP_CLICK_Y, TRAY_POPUP_HAS_ANCHOR
     if TRAY_POPUP_BUSY
         return
     if TRAY_POPUP_VISIBLE {
@@ -60,7 +69,11 @@ TrayPopup_Show() {
     try {
         TrayPopup_Create()
         pt := Buffer(8, 0)
-        DllCall("user32\GetCursorPos", "Ptr", pt)
+        if TRAY_POPUP_HAS_ANCHOR {
+            NumPut("Int", TRAY_POPUP_CLICK_X, "Int", TRAY_POPUP_CLICK_Y, pt)
+            TRAY_POPUP_HAS_ANCHOR := false
+        } else
+            DllCall("user32\GetCursorPos", "Ptr", pt)
         mx := NumGet(pt, 0, "Int"), my := NumGet(pt, 4, "Int")
         mon := DllCall("user32\MonitorFromPoint", "Int64", NumGet(pt, 0, "Int64"), "UInt", 2, "Ptr")
         mi := Buffer(40, 0), NumPut("UInt", 40, mi, 0)
@@ -72,15 +85,15 @@ TrayPopup_Show() {
         try DllCall("shcore\GetDpiForMonitor", "Ptr", mon, "Int", 0, "UInt*", &dpiX, "UInt*", &dpiY)
         if (dpiX < 72 || dpiX > 480)
             dpiX := 96
-        width := Min(Round(350 * dpiX / 96), right - left)
-        height := Min(Round(415 * dpiX / 96), bottom - top)
+        width := Min(Round(250 * dpiX / 96), right - left)
+        height := Min(Round(350 * dpiX / 96), bottom - top)
         x := Min(Max(mx - width + Round(28 * dpiX / 96), left), right - width)
         y := my - height - Round(8 * dpiX / 96)
         if (y < top)
             y := my + Round(12 * dpiX / 96)
         y := Min(Max(y, top), bottom - height)
         TRAY_POPUP_GUI.Show("x" x " y" y " w" width " h" height)
-        try WinSetRegion("0-0 w" width " h" height " R" Round(13*dpiX/96) "-" Round(13*dpiX/96), "ahk_id " TRAY_POPUP_GUI.Hwnd)
+        try WinSetRegion("0-0 w" width " h" height " R" Round(10*dpiX/96) "-" Round(10*dpiX/96), "ahk_id " TRAY_POPUP_GUI.Hwnd)
         TRAY_POPUP_CTRL.Fill()
         WinActivate("ahk_id " TRAY_POPUP_GUI.Hwnd)
         try TRAY_POPUP_CTRL.MoveFocus(0)
@@ -110,8 +123,28 @@ TrayPopup_CheckFocus() {
         TrayPopup_Hide()
 }
 TrayPopup_Ready(sender, args) {
-    global TRAY_POPUP_VIEW
-    try TRAY_POPUP_VIEW.PostWebMessageAsString(A_IsSuspended ? "suspended" : "active")
+    global TRAY_POPUP_VIEW, TRAY_POPUP_READY
+    try {
+        if !args.IsSuccess {
+            if !TRAY_POPUP_READY {
+                try LogLine("Tray navigation failed: " args.WebErrorStatus)
+                SetTimer(TrayPopup_Fallback, -1)
+            }
+            return
+        }
+        TRAY_POPUP_READY := true
+        TRAY_POPUP_VIEW.PostWebMessageAsString(A_IsSuspended ? "suspended" : "active")
+    }
+}
+TrayPopup_Fallback() {
+    global TRAY_POPUP_GUI, TRAY_POPUP_CTRL, TRAY_POPUP_VIEW, TRAY_POPUP_VISIBLE
+    showFallback := TRAY_POPUP_VISIBLE
+    TrayPopup_Hide()
+    try TRAY_POPUP_CTRL.Close()
+    try TRAY_POPUP_GUI.Destroy()
+    TRAY_POPUP_GUI := 0, TRAY_POPUP_CTRL := 0, TRAY_POPUP_VIEW := 0
+    if showFallback
+        try A_TrayMenu.Show()
 }
 TrayPopup_Navigation(sender, args) {
     global TRAY_POPUP_ALLOW_INITIAL
