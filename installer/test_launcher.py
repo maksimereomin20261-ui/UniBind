@@ -24,7 +24,11 @@ class ExtractionTests(unittest.TestCase):
     def make(self, entries):
         path=self.root/'package.zip'
         with zipfile.ZipFile(path,'w') as z:
-            for name,content in entries: z.writestr(name,content)
+            for name,content in entries:
+                # ZipInfo normalises OS separators on Windows; restore raw member name
+                # so this test really includes a malicious backslash entry.
+                info=zipfile.ZipInfo(name); info.filename=name
+                z.writestr(info,content)
         return path
     def test_switch_keeps_old_version_and_failed_install_preserves_state(self):
         old_root,old_versions,old_state=m.ROOT,m.VERSIONS,m.STATE
