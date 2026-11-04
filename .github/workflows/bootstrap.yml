@@ -27,9 +27,10 @@ jobs:
           if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Archive hash mismatch' }
           $dir = Join-Path $env:RUNNER_TEMP 'unibind-project'
           Expand-Archive -Path $zip -DestinationPath $dir
-          git rm -f BUILD_LAUNCHER.bat README_GITHUB_RU.md UniBind.ico launcher.py requirements-build.txt unibind-part01.txt unibind-part02.txt unibind-part03.txt unibind-part04.txt unibind-part05.txt unibind-part06.txt .github/workflows/bootstrap.yml
+          git rm -f BUILD_LAUNCHER.bat README_GITHUB_RU.md UniBind.ico launcher.py requirements-build.txt unibind-part01.txt unibind-part02.txt unibind-part03.txt unibind-part04.txt unibind-part05.txt unibind-part06.txt
           if ($LASTEXITCODE -ne 0) { throw 'Could not remove temporary files' }
           Get-ChildItem -LiteralPath (Join-Path $dir 'UniBind-project') -Force | Copy-Item -Destination . -Recurse -Force
+          Remove-Item -LiteralPath .github/workflows/build.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
