@@ -1,0 +1,22 @@
+{
+  "source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3595.46/microsoft.web.webview2.1.0.3595.46.nupkg",
+  "package_sha256": "f448c20859199ecd846a7d693710d143a8cd019ad1dcdc4cd6332d842d871054",
+  "loaders": [
+    {
+      "arch": "x86",
+      "package_path": "build/native/x86/WebView2Loader.dll",
+      "same_bytes": true,
+      "sha256": "88a23a619ee7f2f4d2e476533aeb59b6fef917baa3eecf369a1c14f7446c649c"
+    },
+    {
+      "arch": "x64",
+      "package_path": "build/native/x64/WebView2Loader.dll",
+      "same_bytes": true,
+      "sha256": "bf2fefaff7fd4775ea1e07328cc3142721943948f16d261fb82cbd978b7f99e2"
+    }
+  ],
+  "license_files": [
+    "LICENSE.txt"
+  ],
+  "note": "Official-package byte comparison, not Authenticode trust validation."
+}
