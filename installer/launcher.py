@@ -13,6 +13,7 @@ import threading
 import urllib.request
 import urllib.error
 import urllib.parse
+import uuid
 from html.parser import HTMLParser
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -152,34 +153,144 @@ def extract_package(archive, destination):
             raise ValueError('В пакете отсутствует необходимый файл: ' + relative)
 
 
-def current():
+REQUIRED_FILES = ('UniBind.exe', 'ui/ui.html', 'lib/WebView2/64bit/WebView2Loader.dll', 'lib/templates/medical_profile.ini')
+
+
+def file_hash(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for chunk in iter(lambda: stream.read(128 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def version_valid(digest, require_manifest=False):
+    """Check all recorded payload files; older installs without a manifest use a basic check."""
+    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+        return False
+    folder = VERSIONS / digest
     try:
-        info = json.loads(STATE.read_text('utf-8'))
-        digest = info['digest']
-        if not re.fullmatch(r'[0-9a-f]{64}', digest):
-            return None
-        exe = VERSIONS / digest / 'UniBind.exe'
-        return exe if exe.is_file() else None
-    except (ValueError, KeyError, OSError, TypeError):
-        return None
+        if folder.is_symlink() or getattr(folder.lstat(), 'st_file_attributes', 0) & 0x400:
+            return False
+        for name in REQUIRED_FILES:
+            check = folder
+            for part in PurePosixPath(name).parts:
+                check = check / part
+                if check.is_symlink() or getattr(check.lstat(), 'st_file_attributes', 0) & 0x400:
+                    return False
+            if not check.is_file():
+                return False
+        manifest = ROOT / 'manifests' / (digest + '.json')
+        if not manifest.exists():
+            return not require_manifest  # Legacy installs predate manifests; only basic checks are possible.
+        if manifest.stat().st_size > 2_000_000:
+            return False
+        files = json.loads(manifest.read_text('utf-8'))
+        if not isinstance(files, dict) or not files or len(files) > 5000:
+            return False
+        if not all(name in files for name in REQUIRED_FILES):
+            return False
+        for name, expected in files.items():
+            if not isinstance(name, str) or not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected):
+                return False
+            parts = PurePosixPath(name).parts
+            if not parts or name.startswith('/') or '\\' in name or any(x in ('.', '..') or ':' in x for x in parts):
+                return False
+            candidate = folder.joinpath(*parts)
+            # Never follow reparse points or links, including intermediate directories.
+            check = folder
+            for part in parts:
+                check = check / part
+                if check.is_symlink() or getattr(check.lstat(), 'st_file_attributes', 0) & 0x400:
+                    return False
+            if not candidate.is_file() or file_hash(candidate) != expected:
+                return False
+        return True
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return False
+
+
+def state_info():
+    try:
+        value = json.loads(STATE.read_text('utf-8'))
+        return value if isinstance(value, dict) else {}
+    except (ValueError, OSError, UnicodeError):
+        return {}
+
+
+def current():
+    info = state_info()
+    digest = info.get('digest')
+    return VERSIONS / digest / 'UniBind.exe' if version_valid(digest, info.get('manifest_required') is True) else None
+
+
+def previous():
+    info = state_info()
+    digest = info.get('previous_digest')
+    return VERSIONS / digest / 'UniBind.exe' if version_valid(digest, info.get('previous_manifest_required') is True) else None
+
+
+def write_state(digest, tag):
+    old = state_info()
+    previous_digest = old.get('digest')
+    previous_required = old.get('manifest_required') is True
+    if previous_digest == digest or not version_valid(previous_digest, previous_required):
+        previous_digest = old.get('previous_digest')
+        previous_required = old.get('previous_manifest_required') is True
+    if not version_valid(previous_digest, previous_required) or previous_digest == digest:
+        previous_digest = None
+        previous_required = False
+    temp = ROOT / 'current.json.tmp'
+    temp.write_text(json.dumps({'digest': digest, 'tag': tag, 'manifest_required': True,
+                                'previous_digest': previous_digest, 'previous_manifest_required': previous_required}, ensure_ascii=False), 'utf-8')
+    os.replace(temp, STATE)
+
+
+def prepare_version(archive, digest):
+    if not re.fullmatch(r'[0-9a-f]{64}', digest):
+        raise ValueError('Недопустимый идентификатор версии')
+    VERSIONS.mkdir(parents=True, exist_ok=True)
+    final = VERSIONS / digest
+    stage = Path(tempfile.mkdtemp(prefix='.stage-', dir=VERSIONS))
+    try:
+        extract_package(archive, stage)
+        files = {p.relative_to(stage).as_posix(): file_hash(p) for p in stage.rglob('*') if p.is_file()}
+        # Never overwrite an existing folder: even an old version may contain user data.
+        if final.exists():
+            matches = not final.is_symlink() and not (getattr(final.lstat(), 'st_file_attributes', 0) & 0x400)
+            for name, expected in files.items():
+                if not matches: break
+                check = final
+                for part in PurePosixPath(name).parts:
+                    check = check / part
+                    if not check.exists() or check.is_symlink() or getattr(check.lstat(), 'st_file_attributes', 0) & 0x400:
+                        matches = False; break
+                if matches and (not check.is_file() or file_hash(check) != expected): matches = False
+            if not matches:
+                quarantine = VERSIONS / ('.quarantine-' + digest + '-' + uuid.uuid4().hex)
+                final.rename(quarantine)
+                try: stage.rename(final)
+                except Exception:
+                    quarantine.rename(final)
+                    raise
+        else:
+            stage.rename(final)
+        manifests = ROOT / 'manifests'
+        manifests.mkdir(parents=True, exist_ok=True)
+        temp = manifests / (digest + '.tmp')
+        temp.write_text(json.dumps(files, sort_keys=True), 'utf-8')
+        os.replace(temp, manifests / (digest + '.json'))
+        if not version_valid(digest):
+            raise ValueError('Не удалось проверить установленные файлы')
+        return final / 'UniBind.exe'
+    finally:
+        if stage.exists(): shutil.rmtree(stage, ignore_errors=True)
 
 
 def commit_version(archive, digest, tag):
-    VERSIONS.mkdir(parents=True, exist_ok=True)
-    final = VERSIONS / digest
-    if not final.exists():
-        stage = Path(tempfile.mkdtemp(prefix='.stage-', dir=VERSIONS))
-        try:
-            extract_package(archive, stage)
-            stage.rename(final)
-        finally:
-            if stage.exists(): shutil.rmtree(stage, ignore_errors=True)
-    if not (final / 'UniBind.exe').is_file():
-        raise ValueError('Папка версии повреждена')
-    temp = ROOT / 'current.json.tmp'
-    temp.write_text(json.dumps({'digest':digest, 'tag':tag}, ensure_ascii=False), 'utf-8')
-    os.replace(temp, STATE)
-    return final / 'UniBind.exe'
+    result = prepare_version(archive, digest)
+    write_state(digest, tag)
+    return result
 
 
 def cleanup_old_versions(active_exe):
@@ -455,6 +566,10 @@ class Window:
         try:
             ROOT.mkdir(parents=True,exist_ok=True); DATA.mkdir(parents=True,exist_ok=True)
             old=current(); chosen=old
+            if old is None:
+                old = previous(); chosen = old
+                if old is not None:
+                    self.emit('warning','Текущая версия повреждена. При необходимости будет запущена предыдущая сохранённая версия.')
             if old is not None:
                 self.emit('heading','Проверка обновлений…')
             try:
@@ -471,7 +586,7 @@ class Window:
                         actual=download(url,archive,size,progress)
                         if actual != digest: raise ValueError('Контрольная сумма пакета не совпадает')
                         self.emit('heading','Установка UniBind'); self.emit('status','Проверяем и распаковываем файлы…'); self.emit('indeterminate', None)
-                        chosen=commit_version(archive,digest,tag)
+                        chosen=prepare_version(archive,digest)
             except Exception as exc:
                 self.emit('connection', False)
                 if old is None: raise RuntimeError(f'Не удалось получить UniBind: {exc}') from exc
@@ -484,10 +599,17 @@ class Window:
                 self.emit('warning','Не найден Microsoft Edge WebView2 Runtime. Если UniBind не откроется, установите Runtime с официального сайта: https://developer.microsoft.com/microsoft-edge/webview2/')
             self.emit('heading','Готово'); self.emit('status','Открываем UniBind…'); self.emit('indeterminate',None)
             env=dict(os.environ,UNIBIND_DATA_DIR=str(DATA))
-            proc=subprocess.Popen([str(chosen)],cwd=str(chosen.parent),env=env)
-            self.emit('status','Удаляем старые версии…')
-            if cleanup_old_versions(chosen):
-                self.emit('warning','Некоторые старые версии не удалены: файлы могут быть заняты или содержать личные данные. Они будут сохранены.')
+            try:
+                proc=subprocess.Popen([str(chosen)],cwd=str(chosen.parent),env=env)
+            except OSError as exc:
+                if old is None or chosen == old: raise
+                self.emit('warning','Не удалось запустить обновление. Открываем предыдущую версию.\n\n'+str(exc))
+                chosen=old
+                proc=subprocess.Popen([str(chosen)],cwd=str(chosen.parent),env=env)
+            if chosen != old:
+                write_state(chosen.parent.name, tag)
+            # Keep old versions and quarantined folders; they may contain personal data.
+            # A running process is not proof that the UI or settings loaded successfully.
             self.emit('launched',None); proc.wait(); self.emit('exit',None)
         except Exception as exc: self.emit('error',str(exc))
 
