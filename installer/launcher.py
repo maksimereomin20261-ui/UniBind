@@ -11,6 +11,9 @@ import sys
 import tempfile
 import threading
 import urllib.request
+import urllib.error
+import urllib.parse
+from html.parser import HTMLParser
 import zipfile
 from pathlib import Path, PurePosixPath
 import tkinter as tk
@@ -28,7 +31,7 @@ LAUNCHER = ROOT / 'UniBind Launcher.exe'
 HEADERS = {'User-Agent':'UniBind-Launcher/1', 'Accept':'application/vnd.github+json'}
 
 
-def release_metadata():
+def release_metadata_api():
     url = f'https://api.github.com/repos/{REPO}/releases/latest'
     with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS), timeout=8) as r:
         payload = r.read(2_000_001)
@@ -47,6 +50,66 @@ def release_metadata():
     if not isinstance(asset.get('size'), int) or not 0 < asset['size'] <= MAX_ARCHIVE:
         raise ValueError('Недопустимый размер пакета')
     return data.get('tag_name', ''), url, digest[7:].lower(), asset['size']
+
+
+class ReleaseAssetParser(HTMLParser):
+    """Read only the requested asset URL and its published GitHub SHA-256."""
+    def __init__(self, expected_path):
+        super().__init__()
+        self.expected_path = expected_path
+        self.links = []
+        self.digests = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'a' and attrs.get('href') == self.expected_path:
+            self.links.append(attrs['href'])
+        if (tag == 'clipboard-copy' and
+                attrs.get('aria-label') == f'Copy to clipboard digest for {ASSET}'):
+            self.digests.append(attrs.get('value', ''))
+
+
+def release_metadata_website():
+    """Fallback for GitHub's unauthenticated API limits; never weakens SHA checks."""
+    base = f'https://github.com/{REPO}'
+    with urllib.request.urlopen(urllib.request.Request(base + '/releases/latest', headers=HEADERS, method='HEAD'), timeout=12) as response:
+        resolved = urllib.parse.urlsplit(response.geturl())
+    prefix = f'/{REPO}/releases/tag/'
+    if (resolved.scheme != 'https' or resolved.netloc != 'github.com' or
+            not resolved.path.startswith(prefix) or resolved.query or resolved.fragment):
+        raise ValueError('Не удалось проверить адрес последнего релиза GitHub')
+    tag = urllib.parse.unquote(resolved.path[len(prefix):])
+    if not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', tag):
+        raise ValueError('Недопустимое имя релиза GitHub')
+    encoded_tag = urllib.parse.quote(tag, safe='')
+    asset_path = f'/{REPO}/releases/download/{encoded_tag}/{ASSET}'
+    url = 'https://github.com' + asset_path
+    html_url = base + '/releases/expanded_assets/' + encoded_tag
+    with urllib.request.urlopen(urllib.request.Request(html_url, headers=HEADERS), timeout=12) as response:
+        content = response.read(2_000_001)
+    if len(content) > 2_000_000:
+        raise ValueError('Слишком большой ответ GitHub')
+    parser = ReleaseAssetParser(asset_path)
+    parser.feed(content.decode('utf-8', errors='strict'))
+    if len(parser.links) != 1 or len(parser.digests) != 1:
+        raise ValueError('GitHub не предоставил единственный проверяемый пакет UniBind')
+    digest = parser.digests[0]
+    if not re.fullmatch(r'sha256:[0-9a-fA-F]{64}', digest):
+        raise ValueError('GitHub не предоставил SHA-256 пакета')
+    with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS, method='HEAD'), timeout=20) as response:
+        length = response.headers.get('Content-Length', '')
+    if not length.isdecimal() or not 0 < int(length) <= MAX_ARCHIVE:
+        raise ValueError('GitHub не предоставил корректный размер пакета')
+    return tag, url, digest[7:].lower(), int(length)
+
+
+def release_metadata():
+    try:
+        return release_metadata_api()
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (403, 429) and exc.code < 500:
+            raise
+        return release_metadata_website()
 
 
 def download(url, output, expected_size, progress):
