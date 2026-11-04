@@ -37,6 +37,9 @@ jobs:
           SetAction(name) {
               global lastAction := name
           }
+          TestWebMessage(sender, args) {
+              try FileAppend("MESSAGE source=" args.Source " value=" args.TryGetWebMessageAsString() "`n", "*")
+          }
           Fail(message) {
               FileAppend("FAIL: " message "`n", "*")
               ExitApp(1)
@@ -49,13 +52,17 @@ jobs:
                   Fail("Tray notification did not create WebView")
               if !TRAY_POPUP_VISIBLE
                   Fail("Tray window did not remain visible")
+              TRAY_POPUP_VIEW.add_WebMessageReceived(TestWebMessage)
+              probe := TRAY_POPUP_VIEW.ExecuteScriptAsync("JSON.stringify({href:location.href,ready:document.readyState,html:document.documentElement.outerHTML.length,bridge:typeof window.chrome?.webview?.postMessage,button:!!document.querySelector('[data-action=open]')})").await2()
+              FileAppend("PROBE " probe "`n", "*")
               for action in ["open", "settings", "profile", "variables", "overlay", "overlay-settings", "suspend"] {
                   lastAction := ""
                   TrayPopup_Show() ; toggle closed if still open
                   if !TRAY_POPUP_VISIBLE
                       TrayPopup_Show()
                   Sleep(400)
-                  TRAY_POPUP_VIEW.ExecuteScriptAsync("document.querySelector('[data-action=" action "]').click()").await2()
+                  result := TRAY_POPUP_VIEW.ExecuteScriptAsync("document.querySelector('[data-action=" action "]').click()").await2()
+                  FileAppend("CLICK " action " result=" result "`n", "*")
                   Sleep(400)
                   if (lastAction != action)
                       Fail("Button not routed: " action " got " lastAction)
